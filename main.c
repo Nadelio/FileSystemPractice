@@ -417,7 +417,7 @@ int parse_command(char* line) {
 	return RESULT_ERROR;
 }
 
-#define INIT_FS(FS) FS = (struct FileSystem*)(malloc(5390)); \
+#define INIT_FS(FS) FS = (struct FileSystem*)(malloc(sizeof(struct FileSystem))); \
 	zeroed_file = (struct File) { .file_size = 0, .file_name = "", .content = "" }; \
 	for(int i = 0; i < max_num_files; i++) { \
 		FS->occupied[i] = false; \
