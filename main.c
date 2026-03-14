@@ -12,6 +12,8 @@
 #endif
 
 typedef size_t u64;
+/* NITPICK: It's preferred to define such constants in ALL CAPS. This can help you visually
+ * differentiate them from variables defined in functions. */
 #define max_num_files 10
 #define max_file_name_size 256
 #define max_file_size 256
@@ -21,6 +23,9 @@ typedef size_t u64;
 #define failure false
 
 // string macros
+/* Using strlen like this can mean you falsely indicate that strings are equal when LIT_2 is a
+ * prefix of LIT_1. For example, LIT_1 = "ABCD" and LIT_2 = "ABC" will be considered equal.
+ * You may want to add a +1 to factor in the NUL terminator as well. */
 #define STREQL(LIT_1, LIT_2) strncmp(LIT_1, LIT_2, strlen(LIT_2)) == 0
 #define STR(LIT) strlen(LIT), (LIT)
 
@@ -57,8 +62,14 @@ void print_error(char* message, ...) {
 
 }
 
+/* Word of caution: When you're computing size, you may have to take alignment into account.
+ * The sizes may also depend on constants that you may change throughout the project.
+ * Moreover, I think the math is off here. */
 struct File { // 256 + 8 + 8 + 256 = 16 + 512 = 530 bytes
+	/* NITPICK: Preferable to use the defines from earlier. Same for 'content'. */
 	char file_name[256]; // Max size is 256 bytes
+	/* Ideally, you may want to separate the position from the file's content in storage.
+	 * This may be more appropriate for an 'opened file' structure. */
 	u64 position; // Position of file in FileSystem
 	u64 file_size; // Size of file in bytes
 	char content[256]; // Max size is 256 bytes
@@ -74,6 +85,9 @@ struct FileSystem { // (8 * 10) + (530 * 10) + (1 * 10) = 80 + 5300 + 10 = 90 + 
 };
 
 /// Returns the next open position in the given FileSystem, if none are open, returns -1
+/* NITPICK: You may want to mark the fs parameter as const to indicate that this only a querying
+ * function rather than something that has 'side effects' on fs.  (Same for other functions like
+ * get_total_occupied) */
 int get_next_position(struct FileSystem* fs) {
 	for(int i = 0; i < max_num_files; i++) {
 		if(!fs->occupied[i]) { return i; }
@@ -81,6 +95,8 @@ int get_next_position(struct FileSystem* fs) {
 	return -1;
 }
 
+/* NITPICK: Since the count can't be negative, I think an unsigned return value is preferred, as long
+ * as it doesn't cause more problems when you need to compare it with values of other types. */
 int get_total_occupied(struct FileSystem* fs) {
 	int count = 0;
 	for(int i = 0; i < max_num_files; i++) {
@@ -120,11 +136,14 @@ bool create_file(struct FileSystem* fs, char file_name[256], u64 file_size, char
 		return failure;
 	}
 
+	/* NITPICK: Though it likely won't happen with a small number of relatively small allocations,
+	 * it's generally good practice to check whether malloc() calls were successful. */
 	struct File* f = (struct File*)(malloc(sizeof(struct File)));
 
 	strcpy_s(f->file_name, sizeof(f->file_name), file_name);
 	
-	
+	/* NITPICK: If strlen(content) isn't expected to change while checking the conditions, it's
+	 * preferable to assign it to a variable and use that instead. */
 	if(strlen(content) == file_size && (strlen(content) < max_file_size || file_size <= max_file_size)) {
 		f->file_size = file_size;
 	} else if (strlen(content) > max_file_size || file_size > max_file_size){
@@ -211,6 +230,8 @@ bool rename_file(struct FileSystem* fs, char* file_name, char* new_name) {
 }
 
 bool move_file(struct FileSystem* fs, char* file_name, char* new_position) {
+	/* NITPICK: It can likely help to separate the issue of figuring out the true position from
+	 * the function that deals with moving the file. */
 	char* endptr;
 	u64 final_position = strtol(new_position, &endptr, 10);
 	if(endptr == new_position) {
@@ -222,6 +243,8 @@ bool move_file(struct FileSystem* fs, char* file_name, char* new_position) {
 	}
 
 	// clamp final position
+	/* You may want to warn if the position changes as a result of this. It sounds like it shouldn't
+	 * happen in ideal cases.  Same with copy_file() below. */
 	if(final_position > 9) { // max index of fs->files[]
 		final_position = 9;
 	} else if(final_position < 0) { // just in case strtol() supports negative integers
@@ -269,8 +292,12 @@ bool copy_file(struct FileSystem* fs, char* file_name, char* copy_position) {
 	}
 
 	int source_position = find_file_position(fs, file_name);
+	/* NITPICK: It's normally preferred to error out in the invalid cases, and then have the rest
+	 * of the program follow the 'happy flow'. */
 	if(source_position >= 0) {
 		print_debug("Copying name over...");
+		/* NITPICK: There's an inconsistency with the way you pass the size parameter t
+		 * strcpy_s. In other cases, you used sizeof(). */
 		strcpy_s(fs->file_names[final_position], max_file_name_size, file_name);
 		
 		print_debug("Occupying position: %s", final_position);
@@ -438,7 +465,9 @@ int main(int argc, char* argv[]) {
 	SetConsoleMode(hOut, dwMode);
 #endif
 
+	/* NITPICK: Although it's only 2 arguments, you may want to rewrite it as a loop. */
 	if(argc > 1) {
+		/* NITPICK: Probably better as a function, since you're reusing it later. */
 		if(STREQL(argv[1], "-d")) {
 			is_debug = true;
 		}
