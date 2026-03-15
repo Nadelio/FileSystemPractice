@@ -8,7 +8,7 @@ I don't know how I would compile this using `gcc`, but it is a single file, I am
 The `-g` is just so that I get the `compile_commands.json` file for lsp support, ngl I don't even need it anymore, I just do it out of habit now.
 
 ## Startup Arguments
-`-d` - enable debug messages
+`-d` - enable debug messages\
 `-t` - enable test cases (don't, there isn't anything special with them)
 
 ## CLI Arguments
