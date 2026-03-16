@@ -13,3 +13,10 @@ The `-g` is just so that I get the `compile_commands.json` file for lsp support,
 
 ## CLI Arguments
 If you want to know about all the available commands, just run the `help` command. It tells you. :P
+
+## Concept
+Okay, so every file has a max size of 256 bytes, every file name also has a max size of 256 bytes.\
+The file system has the space for 10 files, these spaces have indices that can be referenced in various commands (`move`, `copy`, `info`).\
+File contents and file names are both stored as null-terminated strings, so be aware of that.\
+And that's it! That is the full concept!\
+Super duper simple.
