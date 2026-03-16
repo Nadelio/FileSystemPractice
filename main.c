@@ -347,6 +347,11 @@ bool append_to_file(struct FileSystem* fs, char* file_name, char* content) {
 		return FAILURE;
 	}
 
+	if(strlen(content) >= MAX_FILE_SIZE) {
+		print_error("The size of %s is greater than 256 bytes.", content);
+		return FAILURE;
+	}
+
 	if(fs->occupied[current_position]) {
 		if(fs->files[current_position]->size + sizeof(content) < MAX_FILE_SIZE) {
 			strncat_s(fs->files[current_position]->content, sizeof(fs->files[current_position]->content), content, MAX_FILE_SIZE);
@@ -372,6 +377,11 @@ bool prepend_to_file(struct FileSystem* fs, char* file_name, char* prefix) {
 		print_error("File %s does not exist.", file_name);
 		return FAILURE;
 	}
+	
+	if(strlen(prefix) >= MAX_FILE_SIZE) {
+		print_error("The size of %s is greater than 256 bytes.", prefix);
+		return FAILURE;
+	}
 
 	if(fs->occupied[current_position]) {
 		print_debug("File + Prefix Size: %d", sizeof(fs->files[current_position]->content) + strlen(prefix));
@@ -382,10 +392,39 @@ bool prepend_to_file(struct FileSystem* fs, char* file_name, char* prefix) {
 
 		print_debug("Content pointer position: %llu", fs->files[current_position]->content);
 		print_debug("Content pointer offset position: %llu", fs->files[current_position]->content + strlen(prefix));
-		memmove(fs->files[current_position]->content + strlen(prefix) + 1, fs->files[current_position]->content, sizeof(fs->files[current_position]->content));
+
+		memmove(fs->files[current_position]->content + strlen(prefix),
+				fs->files[current_position]->content,
+				strlen(fs->files[current_position]->content) + 1 // only move the used up space and \0
+		);
+
 		memcpy(fs->files[current_position]->content, prefix, strlen(prefix));
 		
 		print_system("Prepended %s to %s.", prefix, file_name);
+		return SUCCESS;
+	}
+
+	print_error("File %s does not exist.", file_name);
+	return FAILURE;
+}
+
+bool overwrite_file(struct FileSystem* fs, char* file_name, char* content) {
+	int current_position = find_file_position(fs, file_name);
+
+	if(current_position < 0 ) {
+		print_error("File %s does not exist.", file_name);
+		return FAILURE;
+	}
+
+	if(strlen(content) >= MAX_FILE_SIZE) {
+		print_error("The size of %s is greater than 256 bytes.", content);
+		return FAILURE;
+	}
+
+	if(fs->occupied[current_position]) {
+		memset(fs->files[current_position]->content, 0, sizeof(fs->files[current_position]->content));
+		strcpy_s(fs->files[current_position]->content, sizeof(fs->files[current_position]->content), content);
+		print_system("Overwrote %s with %s.", file_name, content);
 		return SUCCESS;
 	}
 
@@ -474,10 +513,10 @@ int parse_command(char* line) {
 	if(streql(command, "exit")) {
 		print_debug("Exiting shell..."); /// exit
 		return RESULT_EXIT;
-	} else if(streql(command, "create")) {
+	} else if(streql(command, "create") && !arg_1 && !arg_2) {
 		bool result = create_file(global_file_system, arg_1, strlen(arg_2), arg_2); /// create <file> <content>
 		check_result(result, "Failed to create file.")
-	} else if(streql(command, "delete")) {
+	} else if(streql(command, "delete") && !arg_1 && !arg_2) {
 		int position = find_file_position(global_file_system, arg_1);
 		if(position >= 0 && global_file_system->occupied[position]) {
 			bool result = delete_file(global_file_system, arg_1, position); /// delete <file>
@@ -485,36 +524,49 @@ int parse_command(char* line) {
 		}
 		parser_error = "File does not exist";
 		return RESULT_ERROR;
-	} else if(streql(command, "search")) {
+	} else if(streql(command, "search") && !arg_1) {
 		bool result = search_file(global_file_system, arg_1); /// search <file>
 		check_result(result, "Failed to find file.")
-	} else if(streql(command, "rename")) {
+	} else if(streql(command, "rename") && !arg_1 && !arg_2) {
 		bool result = rename_file(global_file_system, arg_1, arg_2); /// rename <file> <new name>
 		check_result(result, "Failed to rename file.")
 	} else if(streql(command, "list")) {
 		bool result = list_files(global_file_system);
 		check_result(result, "Failed to list files.")
-	} else if(streql(command, "move")) {
+	} else if(streql(command, "move") && !arg_1 && !arg_2) {
 		bool result = move_file(global_file_system, arg_1, arg_2); /// move <file> <new position>
 		check_result(result, "Failed to move file.")
-	} else if(streql(command, "copy")) {
+	} else if(streql(command, "copy") && !arg_1 && !arg_2) {
 		bool result = copy_file(global_file_system, arg_1, arg_2);
 		check_result(result, "Failed to copy file.")
-	} else if(streql(command, "info")) {
+	} else if(streql(command, "info") && !arg_1) {
 		bool result = get_info_on_file(global_file_system, arg_1);
 		check_result(result, "Failed to get info on file.")
-	} else if(streql(command, "echo")) {
+	} else if(streql(command, "echo") && !arg_1) {
 		bool result = echo_file(global_file_system, arg_1);
 		check_result(result, "Failed to echo file.")
-	} else if(streql(command, "append")) {
+	} else if(streql(command, "append") && !arg_1 && !arg_2) {
 		bool result = append_to_file(global_file_system, arg_1, arg_2);
 		check_result(result, "Failed to append to file.")
-	} else if(streql(command, "prepend")) {
+	} else if(streql(command, "prepend") && !arg_1 && !arg_2) {
 		bool result = prepend_to_file(global_file_system, arg_1, arg_2);
 		check_result(result, "Failed to prepend to file.")
+	} else if(streql(command, "overwrite") && !arg_1 && !arg_2) {
+		bool result = overwrite_file(global_file_system, arg_1, arg_2);
+		check_result(result, "Failed to overwrite file.");
+	} else if(streql(command, "cls") || streql(command, "clear")) {
+
+#if defined(_WIN32) || defined(_WIN64)
+		system("cls");
+#else
+		system("clear");
+#endif
+
+		return RESULT_SUCCESS;
 	} else if(streql(command, "help")) {
 		print_system("exit - exit the program.");
 		print_system("help - print this message.");
+		print_system("cls/clear - clear the terminal.");
 		print_system("create <name> <content> - create a file called <name> containing <content>.");
 		print_system("delete <file> - delete <file>.");
 		print_system("search <file> - search for <file>, prints out some information about <file> if it exists.");
@@ -524,8 +576,15 @@ int parse_command(char* line) {
 		print_system("move <file> <new position> - moves <file> to <new position>, will overwrite the file at the new position.");
 		print_system("copy <file> <destination> - copies <file> to <destination>, will overwrite the file at <destination>.");
 		print_system("echo <file> - prints out the contents of <file>.");
-		print_system("append <file> <content> - adds <content> to the end of <file>, will fail if <file>'s size + content's size is greater than 256 bytes or if <file>'s size is already 256 bytes.");
+		print_system("append <file> <content> - adds <content> to the end of <file>, will fail if <file>'s size + <content>'s size is greater than 256 bytes or if <file>'s size is already 256 bytes.");
+		print_system("prepend <file> <content> - adds <content> to the beginning of <file>, will fail if <file>'s size + <content>'s size is greater than 256 bytes or if <file>'s size is already 256 bytes.");
+		print_system("overwrite <file> <content> - overwrites <file> with <content>, will fail if <content>'s size is greater than 256 bytes.");
+		print_system("Additional information:");
+		print_system("\tAll commands that take in a <file> argument will fail if the file doesn't already exist.");
 		return RESULT_SUCCESS;
+	} else if(arg_1 == NULL || arg_2 == NULL) {
+		parser_error = "Missing one of more arguments for command.";
+		return RESULT_ERROR;
 	}
 
 	parser_error = "Unrecognized command.";
