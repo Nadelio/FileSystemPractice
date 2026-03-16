@@ -339,6 +339,60 @@ bool echo_file(const struct FileSystem* fs, char* file_name) {
 	return FAILURE;
 }
 
+bool append_to_file(struct FileSystem* fs, char* file_name, char* content) {
+	int current_position = find_file_position(fs, file_name);
+
+	if(current_position < 0 ) {
+		print_error("File %s does not exist.", file_name);
+		return FAILURE;
+	}
+
+	if(fs->occupied[current_position]) {
+		if(fs->files[current_position]->size + sizeof(content) < MAX_FILE_SIZE) {
+			strncat_s(fs->files[current_position]->content, sizeof(fs->files[current_position]->content), content, MAX_FILE_SIZE);
+			print_system("Appended %s to %s.", content, file_name);
+			return SUCCESS;
+		} else if(fs->files[current_position]->size >= MAX_FILE_SIZE) {
+			print_error("%s is already at maximum size.", file_name);
+			return FAILURE;
+		} else {
+			print_error("%s cannot be appended to %s because it will go over the file size limit of 256 bytes.", content, file_name);
+			return FAILURE;
+		}
+	}
+
+	print_error("File %s does not exist.", file_name);
+	return FAILURE;
+}
+
+bool prepend_to_file(struct FileSystem* fs, char* file_name, char* prefix) {
+	int current_position = find_file_position(fs, file_name);
+
+	if(current_position < 0 ) {
+		print_error("File %s does not exist.", file_name);
+		return FAILURE;
+	}
+
+	if(fs->occupied[current_position]) {
+		print_debug("File + Prefix Size: %d", sizeof(fs->files[current_position]->content) + strlen(prefix));
+		if(fs->files[current_position]->size + strlen(prefix) >= MAX_FILE_SIZE) {
+			print_error("%s is already at maximum size.", file_name);
+			return FAILURE;
+		}
+
+		print_debug("Content pointer position: %llu", fs->files[current_position]->content);
+		print_debug("Content pointer offset position: %llu", fs->files[current_position]->content + strlen(prefix));
+		memmove(fs->files[current_position]->content + strlen(prefix) + 1, fs->files[current_position]->content, sizeof(fs->files[current_position]->content));
+		memcpy(fs->files[current_position]->content, prefix, strlen(prefix));
+		
+		print_system("Prepended %s to %s.", prefix, file_name);
+		return SUCCESS;
+	}
+
+	print_error("File %s does not exist.", file_name);
+	return FAILURE;
+}
+
 int tests() {
 	struct FileSystem* fs = (struct FileSystem*)(malloc(sizeof(struct FileSystem)));
 	zeroed_file = (struct File) { .size = 0, .name = "", .content = ""};
@@ -451,7 +505,13 @@ int parse_command(char* line) {
 		check_result(result, "Failed to get info on file.")
 	} else if(streql(command, "echo")) {
 		bool result = echo_file(global_file_system, arg_1);
-		check_result(result, "Failed to echo file.");
+		check_result(result, "Failed to echo file.")
+	} else if(streql(command, "append")) {
+		bool result = append_to_file(global_file_system, arg_1, arg_2);
+		check_result(result, "Failed to append to file.")
+	} else if(streql(command, "prepend")) {
+		bool result = prepend_to_file(global_file_system, arg_1, arg_2);
+		check_result(result, "Failed to prepend to file.")
 	} else if(streql(command, "help")) {
 		print_system("exit - exit the program.");
 		print_system("help - print this message.");
@@ -464,6 +524,7 @@ int parse_command(char* line) {
 		print_system("move <file> <new position> - moves <file> to <new position>, will overwrite the file at the new position.");
 		print_system("copy <file> <destination> - copies <file> to <destination>, will overwrite the file at <destination>.");
 		print_system("echo <file> - prints out the contents of <file>.");
+		print_system("append <file> <content> - adds <content> to the end of <file>, will fail if <file>'s size + content's size is greater than 256 bytes or if <file>'s size is already 256 bytes.");
 		return RESULT_SUCCESS;
 	}
 
@@ -507,7 +568,7 @@ int main(int argc, char* argv[]) {
 	
 	// TODO:
 	// File I/O
-	//   - append, prepend, overwrite
+	//   - prepend, overwrite
 
 	// begin shell
 	bool quit = false;
