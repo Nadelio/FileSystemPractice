@@ -93,12 +93,14 @@ int find_file_position(const struct FileSystem* fs, char* file_name) {
 	print_debug("Total occupied spaces: %d", total_occupied);
 	
 	for(int i = 0; i < MAX_NUM_FILES; i++) {
-		if(fs->occupied[i]) { print_debug("%d | %s", i, fs->files[i]->name); }
-		else { print_debug("%d | Empty", i); }
-
-		if(streql(fs->files[i]->name, file_name)) {
-			print_debug("%s equals %s, %s's position: %d", file_name, fs->files[i]->name, fs->files[i]->name, i);
-			return i;
+		if(fs->occupied[i]) { 
+			print_debug("%d | %s", i, fs->files[i]->name); 
+			if(streql(fs->files[i]->name, file_name)) {
+				print_debug("%s equals %s, %s's position: %d", file_name, fs->files[i]->name, fs->files[i]->name, i);
+				return i;
+			}
+		} else { 
+			print_debug("%d | Empty", i); 
 		}
 	}
 	
@@ -279,7 +281,7 @@ int count_duplicate_files(const struct FileSystem* fs, char* file_name) {
 	for(int i = 0; i < MAX_NUM_FILES; i++) {
 		print_debug("count_duplicate_files.count = %d", count);
 		print_debug("count_duplicate_files.i = %d", i);
-		if(starts_with(fs->files[i]->name, file_name)) {
+		if(fs->occupied[i] && starts_with(fs->files[i]->name, file_name)) {
 			print_debug("%s is a duplicate of %s.", fs->files[i]->name, file_name);
 			count++;
 		}
@@ -288,7 +290,7 @@ int count_duplicate_files(const struct FileSystem* fs, char* file_name) {
 }
 
 /// Copy file to new position, will overwrite file in copy_position 
-/// /// Returns true if successful, returns false if positional argument is invalid, no file could be found
+/// Returns true if successful, returns false if positional argument is invalid, no file could be found
 bool copy_file(struct FileSystem* fs, char* file_name, char* copy_position) {
 	int final_position = string_to_clamped_int(copy_position);
 	int source_position = find_file_position(fs, file_name);
@@ -300,14 +302,17 @@ bool copy_file(struct FileSystem* fs, char* file_name, char* copy_position) {
 
 
 	if(source_position >= 0 && fs->occupied[source_position]) {
+		// Allocate memory for the new file at destination
+		struct File* new_file = (struct File*)(malloc(sizeof(struct File)));
+		
 		print_debug("Copying name over...");
-		strcpy_s(fs->files[final_position]->name, sizeof(fs->files[final_position]->name), file_name);
+		strcpy_s(new_file->name, sizeof(new_file->name), file_name);
 
 		// assemble copy mark
 		print_debug("Counting duplicate files");
 		int dup_file_count = count_duplicate_files(fs, file_name);
-		print_debug("%d duplicates found.");
-		char copy_mark_str[256] = " (";
+		print_debug("%d duplicates found.", dup_file_count);
+		char copy_mark_str[256] = "(";
 		char count_as_str[256];
 		snprintf(count_as_str, sizeof(count_as_str), "%d", dup_file_count);
 		strcat_s(copy_mark_str, sizeof(copy_mark_str), count_as_str);
@@ -315,20 +320,27 @@ bool copy_file(struct FileSystem* fs, char* file_name, char* copy_position) {
 		print_debug("Copy mark: '%s'", copy_mark_str);
 
 		// add on copy mark
-		strcat_s(fs->files[final_position]->name, sizeof(fs->files[final_position]->name), copy_mark_str);
-		print_debug("Final new name: %s", fs->files[final_position]->name);
+		strcat_s(new_file->name, sizeof(new_file->name), copy_mark_str);
+		print_debug("Final new name: %s", new_file->name);
 
-		printf("[DEBUG] Occupying position %d...\n", final_position); // testing to see if this is causing crash
+		// assemble copy of given file
+		print_debug("Attempting to copy %s to %d", file_name, final_position);
+		strcpy_s(new_file->content, sizeof(new_file->content), fs->files[source_position]->content);
+		new_file->size = fs->files[source_position]->size;
+		
+		// since I am allocating every time now, I need to free old files if they exist in the copy position
+		if(fs->occupied[final_position]) {
+			free(fs->files[final_position]);
+		}
+		
+		// copy over file
+		fs->files[final_position] = new_file;
 		fs->occupied[final_position] = true;
-
-		print_debug("Attempting to copy %s to %llu", file_name, final_position);
-		strcpy_s(fs->files[final_position]->content, sizeof(fs->files[final_position]->content), fs->files[source_position]->content);
-		fs->files[final_position]->size = fs->files[source_position]->size; // copy size
 
 		print_debug("File at %d: %s", source_position, file_name);
 		print_debug("File at %d: %s", final_position, fs->files[final_position]->name);
 
-		print_system("Successfully copied %s to %llu.", file_name, final_position);
+		print_system("Successfully copied %s to %d.", file_name, final_position);
 		return SUCCESS;
 	}
 
