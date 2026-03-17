@@ -181,8 +181,11 @@ bool delete_file(struct FileSystem* fs, char* file_name, int position) {
 	int file_name_position = 0;
 	size_t size_of_file_name = strlen(file_name);
 	for(int i = 0; i < MAX_NUM_FILES; i++) { // find true position
+		print_debug("Checking if %s is the same as %s", fs->files[position]->name, file_name);
 		if(size_of_file_name == strlen(fs->files[position]->name)) { // check if same length first
+			print_debug("%s and %s are the same length", fs->files[position]->name, file_name);
 			if(streql(file_name, fs->files[position]->name)) {
+				print_debug("%s and %s are the same string.", fs->files[position]->name, file_name);
 				file_name_position = i;
 				break;
 			}
@@ -190,6 +193,7 @@ bool delete_file(struct FileSystem* fs, char* file_name, int position) {
 	}
 
 	if(file_name_position == position) { // check if true position matches given position
+		print_debug("True position matches given position: %d == %d", file_name_position, position);
 		free(fs->files[position]);
 		fs->files[position] = &zeroed_file;
 		fs->occupied[position] = false;
@@ -261,6 +265,28 @@ bool move_file(struct FileSystem* fs, char* file_name, char* new_position) {
 	return FAILURE;
 }
 
+bool starts_with(const char* str, const char* prefix) {
+	size_t prefix_len = strlen(prefix);
+
+	if(prefix_len > strlen(str)) {
+		return false;
+	}
+	return strncmp(str, prefix, prefix_len) == 0;
+}
+
+int count_duplicate_files(const struct FileSystem* fs, char* file_name) {
+	int count = 0;
+	for(int i = 0; i < MAX_NUM_FILES; i++) {
+		print_debug("count_duplicate_files.count = %d", count);
+		print_debug("count_duplicate_files.i = %d", i);
+		if(starts_with(fs->files[i]->name, file_name)) {
+			print_debug("%s is a duplicate of %s.", fs->files[i]->name, file_name);
+			count++;
+		}
+	}
+	return count;
+}
+
 /// Copy file to new position, will overwrite file in copy_position 
 /// /// Returns true if successful, returns false if positional argument is invalid, no file could be found
 bool copy_file(struct FileSystem* fs, char* file_name, char* copy_position) {
@@ -272,11 +298,27 @@ bool copy_file(struct FileSystem* fs, char* file_name, char* copy_position) {
 		return FAILURE;
 	}
 
+
 	if(source_position >= 0 && fs->occupied[source_position]) {
 		print_debug("Copying name over...");
 		strcpy_s(fs->files[final_position]->name, sizeof(fs->files[final_position]->name), file_name);
-		
-		print_debug("Occupying position %s...", final_position);
+
+		// assemble copy mark
+		print_debug("Counting duplicate files");
+		int dup_file_count = count_duplicate_files(fs, file_name);
+		print_debug("%d duplicates found.");
+		char copy_mark_str[256] = " (";
+		char count_as_str[256];
+		snprintf(count_as_str, sizeof(count_as_str), "%d", dup_file_count);
+		strcat_s(copy_mark_str, sizeof(copy_mark_str), count_as_str);
+		strcat_s(copy_mark_str, sizeof(copy_mark_str), ")");
+		print_debug("Copy mark: '%s'", copy_mark_str);
+
+		// add on copy mark
+		strcat_s(fs->files[final_position]->name, sizeof(fs->files[final_position]->name), copy_mark_str);
+		print_debug("Final new name: %s", fs->files[final_position]->name);
+
+		printf("[DEBUG] Occupying position %d...\n", final_position); // testing to see if this is causing crash
 		fs->occupied[final_position] = true;
 
 		print_debug("Attempting to copy %s to %llu", file_name, final_position);
@@ -513,10 +555,10 @@ int parse_command(char* line) {
 	if(streql(command, "exit")) {
 		print_debug("Exiting shell..."); /// exit
 		return RESULT_EXIT;
-	} else if(streql(command, "create") && !arg_1 && !arg_2) {
+	} else if(streql(command, "create") && arg_1 && arg_2) {
 		bool result = create_file(global_file_system, arg_1, strlen(arg_2), arg_2); /// create <file> <content>
 		check_result(result, "Failed to create file.")
-	} else if(streql(command, "delete") && !arg_1 && !arg_2) {
+	} else if(streql(command, "delete") && arg_1) {
 		int position = find_file_position(global_file_system, arg_1);
 		if(position >= 0 && global_file_system->occupied[position]) {
 			bool result = delete_file(global_file_system, arg_1, position); /// delete <file>
@@ -524,34 +566,34 @@ int parse_command(char* line) {
 		}
 		parser_error = "File does not exist";
 		return RESULT_ERROR;
-	} else if(streql(command, "search") && !arg_1) {
+	} else if(streql(command, "search") && arg_1) {
 		bool result = search_file(global_file_system, arg_1); /// search <file>
 		check_result(result, "Failed to find file.")
-	} else if(streql(command, "rename") && !arg_1 && !arg_2) {
+	} else if(streql(command, "rename") && arg_1 && arg_2) {
 		bool result = rename_file(global_file_system, arg_1, arg_2); /// rename <file> <new name>
 		check_result(result, "Failed to rename file.")
 	} else if(streql(command, "list")) {
 		bool result = list_files(global_file_system);
 		check_result(result, "Failed to list files.")
-	} else if(streql(command, "move") && !arg_1 && !arg_2) {
+	} else if(streql(command, "move") && arg_1 && arg_2) {
 		bool result = move_file(global_file_system, arg_1, arg_2); /// move <file> <new position>
 		check_result(result, "Failed to move file.")
-	} else if(streql(command, "copy") && !arg_1 && !arg_2) {
+	} else if(streql(command, "copy") && arg_1 && arg_2) {
 		bool result = copy_file(global_file_system, arg_1, arg_2);
 		check_result(result, "Failed to copy file.")
-	} else if(streql(command, "info") && !arg_1) {
+	} else if(streql(command, "info") && arg_1) {
 		bool result = get_info_on_file(global_file_system, arg_1);
 		check_result(result, "Failed to get info on file.")
-	} else if(streql(command, "echo") && !arg_1) {
+	} else if(streql(command, "echo") && arg_1) {
 		bool result = echo_file(global_file_system, arg_1);
 		check_result(result, "Failed to echo file.")
-	} else if(streql(command, "append") && !arg_1 && !arg_2) {
+	} else if(streql(command, "append") && arg_1 && arg_2) {
 		bool result = append_to_file(global_file_system, arg_1, arg_2);
 		check_result(result, "Failed to append to file.")
-	} else if(streql(command, "prepend") && !arg_1 && !arg_2) {
+	} else if(streql(command, "prepend") && arg_1 && arg_2) {
 		bool result = prepend_to_file(global_file_system, arg_1, arg_2);
 		check_result(result, "Failed to prepend to file.")
-	} else if(streql(command, "overwrite") && !arg_1 && !arg_2) {
+	} else if(streql(command, "overwrite") && arg_1 && arg_2) {
 		bool result = overwrite_file(global_file_system, arg_1, arg_2);
 		check_result(result, "Failed to overwrite file.");
 	} else if(streql(command, "cls") || streql(command, "clear")) {
@@ -582,7 +624,7 @@ int parse_command(char* line) {
 		print_system("Additional information:");
 		print_system("\tAll commands that take in a <file> argument will fail if the file doesn't already exist.");
 		return RESULT_SUCCESS;
-	} else if(arg_1 == NULL || arg_2 == NULL) {
+	} else if(!arg_1 || !arg_2) {
 		parser_error = "Missing one of more arguments for command.";
 		return RESULT_ERROR;
 	}
