@@ -18,5 +18,6 @@ If you want to know about all the available commands, just run the `help` comman
 Okay, so every file has a max size of 256 bytes, every file name also has a max size of 256 bytes.\
 The file system has the space for 10 files, these spaces have indices that can be referenced in various commands (`move`, `copy`, `info`).\
 File contents and file names are both stored as null-terminated strings, so be aware of that.\
+Each file also stores up to five tags and its extension metadata.\
 And that's it! That is the full concept!\
 Super duper simple.

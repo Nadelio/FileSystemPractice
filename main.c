@@ -17,7 +17,7 @@
 #define MAX_TAG_COUNT 5
 #define MAX_TAG_NAME_LENGTH 256
 #define MAX_FILE_EXTENSION_LENGTH 256
-#define MAX_EXTENSION_ALIAS_LENGTH 5
+#define MAX_EXTENSION_ALIAS_LENGTH MAX_FILE_EXTENSION_LENGTH
 #define MAX_DEFINED_FILE_ASSOCIATIONS 5
 #define MAX_COMMAND_LENGTH 20
 
@@ -135,6 +135,70 @@ typedef struct {
 	FileAssociation file_extensions[MAX_DEFINED_FILE_ASSOCIATIONS];
 } FileSystem;
 
+File zeroed_file;
+
+bool initialize_file_system(FileSystem* fs) {
+	if(fs == NULL) {
+		return FAILURE;
+	}
+
+	memset(fs, 0, sizeof(*fs));
+	for(int i = 0; i < MAX_NUM_FILES; i++) {
+		fs->files[i] = &zeroed_file;
+	}
+
+	if(!copy_string(fs->file_extensions[0].alias, sizeof(fs->file_extensions[0].alias), "none") ||
+			!copy_string(fs->file_extensions[0].extension, sizeof(fs->file_extensions[0].extension), ".none") ||
+			!copy_string(fs->file_extensions[1].alias, sizeof(fs->file_extensions[1].alias), "text") ||
+			!copy_string(fs->file_extensions[1].extension, sizeof(fs->file_extensions[1].extension), ".txt")) {
+		print_error("Could not initialize built-in file extensions.");
+		return FAILURE;
+	}
+
+	return SUCCESS;
+}
+
+int find_extension_association(const FileSystem* fs, const char* extension_or_alias) {
+	if(fs == NULL || extension_or_alias == NULL) {
+		return -1;
+	}
+
+	for(int i = 0; i < MAX_DEFINED_FILE_ASSOCIATIONS; i++) {
+		const FileAssociation* association = &fs->file_extensions[i];
+		if(association->extension[0] == '\0') {
+			continue;
+		}
+		if(strcmp(association->alias, extension_or_alias) == 0 ||
+				strcmp(association->extension, extension_or_alias) == 0) {
+			return i;
+		}
+
+		if(extension_or_alias[0] != '.' &&
+				strcmp(association->extension + 1, extension_or_alias) == 0) {
+			return i;
+		}
+	}
+
+	return -1;
+}
+
+bool set_file_extension(const FileSystem* fs, File* file, const char* file_name) {
+	const char* dot = strrchr(file_name, '.');
+	const char* extension = ".none";
+	if(dot != NULL && dot[1] != '\0') {
+		int association = find_extension_association(fs, dot);
+		if(association >= 0) {
+			extension = fs->file_extensions[association].extension;
+		}
+	}
+
+	if(!copy_string(file->extension, sizeof(file->extension), extension)) {
+		print_error("Could not store the extension for %s.", file_name);
+		return FAILURE;
+	}
+	return SUCCESS;
+}
+
 /// Returns the next open position in the given FileSystem, if none are open, returns -1
 int get_next_position(const FileSystem* fs) {
 	for(int i = 0; i < MAX_NUM_FILES; i++) {
@@ -160,7 +224,7 @@ int find_file_position(const FileSystem* fs, char* file_name) {
 	for(int i = 0; i < MAX_NUM_FILES; i++) {
 		if(fs->occupied[i]) { 
 			print_debug("%d | %s", i, fs->files[i]->name); 
-			if(streql(fs->files[i]->name, file_name)) {
+			if(strcmp(fs->files[i]->name, file_name) == 0) {
 				print_debug("%s equals %s, %s's position: %d", file_name, fs->files[i]->name, fs->files[i]->name, i);
 				return i;
 			}
@@ -198,6 +262,51 @@ int string_to_clamped_int(char* str) {
 	return final_position;
 }
 
+bool file_name_exists(const FileSystem* fs, const char* file_name, int ignored_position) {
+	for(int i = 0; i < MAX_NUM_FILES; i++) {
+		if(i != ignored_position && fs->occupied[i] && strcmp(fs->files[i]->name, file_name) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/// Writes a name that no other file uses into output (ignoring the file at ignored_position).
+/// Duplicates get "(n)" inserted before the extension, e.g. notes.txt -> notes(1).txt.
+/// Returns false if the resulting name would not fit in output_size.
+bool make_unique_file_name(const FileSystem* fs, const char* file_name, int ignored_position, char* output, size_t output_size) {
+	if(!file_name_exists(fs, file_name, ignored_position)) {
+		if(!copy_string(output, output_size, file_name)) {
+			print_error("File name is too long: %s", file_name);
+			return FAILURE;
+		}
+		return SUCCESS;
+	}
+
+	// split at the same dot set_file_extension uses so the extension survives the suffix
+	const char* dot = strrchr(file_name, '.');
+	if(dot != NULL && dot[1] == '\0') {
+		dot = NULL;
+	}
+	size_t base_length = dot != NULL ? (size_t)(dot - file_name) : strlen(file_name);
+	const char* extension = dot != NULL ? dot : "";
+
+	// at most MAX_NUM_FILES names can be taken, so a free suffix is always found within this range
+	for(int n = 1; n <= MAX_NUM_FILES; n++) {
+		int length = snprintf(output, output_size, "%.*s(%d)%s", (int)base_length, file_name, n, extension);
+		if(length < 0 || (size_t)length >= output_size) {
+			print_error("Cannot make %s unique without exceeding the file name limit of %d characters.", file_name, (int)output_size - 1);
+			return FAILURE;
+		}
+		if(!file_name_exists(fs, output, ignored_position)) {
+			return SUCCESS;
+		}
+	}
+
+	print_error("Could not find a unique name for %s.", file_name);
+	return FAILURE;
+}
+
 /// Creates a file and returns a true/false based on success/failure.
 /// file_size is the size of the file in bytes.
 /// The max size of a file is 256 bytes (for simplicity)
@@ -217,8 +326,7 @@ bool create_file(FileSystem* fs, char* file_name, size_t file_size, char* conten
 		return FAILURE;
 	}
 
-	if(!copy_string(f->name, sizeof(f->name), file_name)) {
-		print_error("File name is too long: %s", file_name);
+	if(!make_unique_file_name(fs, file_name, -1, f->name, sizeof(f->name))) {
 		free(f);
 		return FAILURE;
 	}
@@ -240,6 +348,12 @@ bool create_file(FileSystem* fs, char* file_name, size_t file_size, char* conten
 	
 	print_debug("File Contents: %s, Given Contents: %s", f->content, content);
 
+	memset(f->tags, 0, sizeof(f->tags));
+	if(!set_file_extension(fs, f, file_name)) {
+		free(f);
+		return FAILURE;
+	}
+
 	fs->files[next_open_position] = f;
 	fs->occupied[next_open_position] = true;
 
@@ -247,41 +361,25 @@ bool create_file(FileSystem* fs, char* file_name, size_t file_size, char* conten
 	return SUCCESS;
 }
 
-File zeroed_file;
-
 /// Deletes the file pointed to by the given pointer.
 /// Returns false if failed and true if succeeded.
 bool delete_file(FileSystem* fs, char* file_name, int position) {
 	print_debug("Deleting file...");
 
-	if(position >= MAX_NUM_FILES) {
+	if(position < 0 || position >= MAX_NUM_FILES) {
 		print_error("Attempted to access a non-existent position in the File System.");
 		return FAILURE;
 	}
 
-	int file_name_position = 0;
-	size_t size_of_file_name = strlen(file_name);
-	for(int i = 0; i < MAX_NUM_FILES; i++) { // find true position
-		print_debug("Checking if %s is the same as %s", fs->files[position]->name, file_name);
-		if(size_of_file_name == strlen(fs->files[position]->name)) { // check if same length first
-			print_debug("%s and %s are the same length", fs->files[position]->name, file_name);
-			if(streql(file_name, fs->files[position]->name)) {
-				print_debug("%s and %s are the same string.", fs->files[position]->name, file_name);
-				file_name_position = i;
-				break;
-			}
-		}
-	}
-
-	if(file_name_position == position) { // check if true position matches given position
-		print_debug("True position matches given position: %d == %d", file_name_position, position);
+	if(fs->occupied[position] && strcmp(fs->files[position]->name, file_name) == 0) { // check the file at position is the named file
+		print_debug("%s is at the given position: %d", file_name, position);
 		free(fs->files[position]);
 		fs->files[position] = &zeroed_file;
 		fs->occupied[position] = false;
 		print_system("File successfully deleted.");
 		return SUCCESS;
 	} else { // error if true position != given position
-		print_error("Attempted deletion of file that does not have the same position as given position.\n\tFile: %s,\n\tPosition: %d,\n\tGiven Position: %d", file_name, file_name_position, position);
+		print_error("Attempted deletion of file that is not at the given position.\n\tFile: %s,\n\tActual Position: %d,\n\tGiven Position: %d", file_name, find_file_position(fs, file_name), position);
 		return FAILURE;
 	}
 }
@@ -289,13 +387,147 @@ bool delete_file(FileSystem* fs, char* file_name, int position) {
 /// Searches for a file in the filesystem by name
 /// Prints out the information of the file.
 /// Returns true if successful, returns false if no file could be found
-bool search_file(const FileSystem* fs, char* file_name) {
-	int position = find_file_position(fs, file_name);
-	if(position >= 0 && fs->occupied[position]) {
-		File* f = fs->files[position];
-		print_system("Found file: %s\n\tSize: %llu\n\tPosition: %llu", f->name, strlen(f->content), position);
+bool search_file(const FileSystem* fs, char* query) {
+	if(query[0] == '#' || query[0] == '@') {
+		bool search_tags = query[0] == '#';
+		const char* value = query + 1;
+		if(*value == '\0') {
+			print_error("Search query must include a tag or extension after %c.", query[0]);
+			return FAILURE;
+		}
+
+		int association = search_tags ? -1 : find_extension_association(fs, value);
+		if(!search_tags && association < 0) {
+			print_error("No file extension is associated with %s.", value);
+			return FAILURE;
+		}
+
+		const char* extension = search_tags ? NULL : fs->file_extensions[association].extension;
+		int matches = 0;
+		for(int i = 0; i < MAX_NUM_FILES; i++) {
+			if(!fs->occupied[i]) {
+				continue;
+			}
+
+			File* file = fs->files[i];
+			bool matched = search_tags ? false : strcmp(file->extension, extension) == 0;
+			if(search_tags) {
+				for(int j = 0; j < MAX_TAG_COUNT; j++) {
+					if(file->tags[j][0] != '\0' && strcmp(file->tags[j], value) == 0) {
+						matched = true;
+						break;
+					}
+				}
+			}
+
+			if(matched) {
+				print_system("Found file: %s\n\tSize: %llu\n\tPosition: %d\n\tExtension: %s",
+						file->name, file->size, i, file->extension);
+				matches++;
+			}
+		}
+
+		if(matches == 0) {
+			print_error("No files found for search query %s.", query);
+			return FAILURE;
+		}
 		return SUCCESS;
 	}
+
+	int position = find_file_position(fs, query);
+	if(position >= 0 && fs->occupied[position]) {
+		File* f = fs->files[position];
+		print_system("Found file: %s\n\tSize: %llu\n\tPosition: %llu\n\tExtension: %s", f->name, f->size, position, f->extension);
+		return SUCCESS;
+	}
+	return FAILURE;
+}
+
+bool tag_file(FileSystem* fs, char* file_name, char* tag) {
+	int position = find_file_position(fs, file_name);
+	if(position < 0 || !fs->occupied[position]) {
+		print_error("File %s does not exist.", file_name);
+		return FAILURE;
+	}
+
+	if(tag[0] == '#') {
+		tag++;
+	}
+	if(tag[0] == '\0' || strlen(tag) >= MAX_TAG_NAME_LENGTH) {
+		print_error("Tag must contain between 1 and %d characters.", MAX_TAG_NAME_LENGTH - 1);
+		return FAILURE;
+	}
+
+	File* file = fs->files[position];
+	int empty_slot = -1;
+	for(int i = 0; i < MAX_TAG_COUNT; i++) {
+		if(strcmp(file->tags[i], tag) == 0) {
+			print_system("%s already has the %s tag.", file_name, tag);
+			return SUCCESS;
+		}
+		if(file->tags[i][0] == '\0' && empty_slot < 0) {
+			empty_slot = i;
+		}
+	}
+
+	if(empty_slot < 0) {
+		print_error("%s already has the maximum of %d tags.", file_name, MAX_TAG_COUNT);
+		return FAILURE;
+	}
+	if(!copy_string(file->tags[empty_slot], sizeof(file->tags[empty_slot]), tag)) {
+		print_error("Tag is too long to store.");
+		return FAILURE;
+	}
+
+	print_system("Added the %s tag to %s.", tag, file_name);
+	return SUCCESS;
+}
+
+bool associate_file_extension(FileSystem* fs, char* extension, char* alias) {
+	if(extension[0] == '.') {
+		extension++;
+	}
+	if(extension[0] == '\0' || alias[0] == '\0') {
+		print_error("Extension and extension name must not be empty.");
+		return FAILURE;
+	}
+
+	char normalized_extension[MAX_FILE_EXTENSION_LENGTH];
+	int extension_length = snprintf(normalized_extension, sizeof(normalized_extension), ".%s", extension);
+	if(extension_length < 0 || (size_t)extension_length >= sizeof(normalized_extension) ||
+			strlen(alias) >= MAX_EXTENSION_ALIAS_LENGTH) {
+		print_error("Extension or extension name is too long.");
+		return FAILURE;
+	}
+	if(strchr(extension, '.') != NULL || strchr(alias, '.') != NULL) {
+		print_error("Provide an extension without additional dots and an extension name without dots.");
+		return FAILURE;
+	}
+	if(find_extension_association(fs, normalized_extension) >= 0 ||
+			find_extension_association(fs, alias) >= 0) {
+		print_error("The extension or extension name is already associated.");
+		return FAILURE;
+	}
+
+	for(int i = 0; i < MAX_DEFINED_FILE_ASSOCIATIONS; i++) {
+		if(fs->file_extensions[i].extension[0] == '\0') {
+			copy_string(fs->file_extensions[i].extension, sizeof(fs->file_extensions[i].extension), normalized_extension);
+			copy_string(fs->file_extensions[i].alias, sizeof(fs->file_extensions[i].alias), alias);
+			for(int file_index = 0; file_index < MAX_NUM_FILES; file_index++) {
+				if(fs->occupied[file_index]) {
+					const char* dot = strrchr(fs->files[file_index]->name, '.');
+					if(dot != NULL && strcmp(dot, normalized_extension) == 0 &&
+							!set_file_extension(fs, fs->files[file_index], fs->files[file_index]->name)) {
+						return FAILURE;
+					}
+				}
+			}
+			print_system("Associated .%s with %s.", extension, alias);
+			return SUCCESS;
+		}
+	}
+
+	print_error("No more file extension associations can be added.");
 	return FAILURE;
 }
 
@@ -307,11 +539,15 @@ bool rename_file(FileSystem* fs, char* file_name, char* new_name) {
 
 	if(position >= 0 && fs->occupied[position]) {
 		print_debug("Attempting to rename %s to %s.", file_name, new_name);
-		if(!copy_string(fs->files[position]->name, sizeof(fs->files[position]->name), new_name)) {
-			print_error("New file name is too long: %s", new_name);
+		char unique_name[MAX_FILE_NAME_SIZE];
+		if(!make_unique_file_name(fs, new_name, position, unique_name, sizeof(unique_name))) {
 			return FAILURE;
 		}
-		print_system("Successfully renamed %s to %s.", file_name, new_name);
+		if(!set_file_extension(fs, fs->files[position], unique_name)) {
+			return FAILURE;
+		}
+		copy_string(fs->files[position]->name, sizeof(fs->files[position]->name), unique_name);
+		print_system("Successfully renamed %s to %s.", file_name, unique_name);
 		return SUCCESS;
 	}
 	print_error("Attempted to rename non-existent file: %s.", file_name);
@@ -348,29 +584,7 @@ bool move_file(FileSystem* fs, char* file_name, char* new_position) {
 	return FAILURE;
 }
 
-bool starts_with(const char* str, const char* prefix) {
-	size_t prefix_len = strlen(prefix);
-
-	if(prefix_len > strlen(str)) {
-		return false;
-	}
-	return strncmp(str, prefix, prefix_len) == 0;
-}
-
-int count_duplicate_files(const FileSystem* fs, char* file_name) {
-	int count = 0;
-	for(int i = 0; i < MAX_NUM_FILES; i++) {
-		print_debug("count_duplicate_files.count = %d", count);
-		print_debug("count_duplicate_files.i = %d", i);
-		if(fs->occupied[i] && starts_with(fs->files[i]->name, file_name)) {
-			print_debug("%s is a duplicate of %s.", fs->files[i]->name, file_name);
-			count++;
-		}
-	}
-	return count;
-}
-
-/// Copy file to new position, will overwrite file in copy_position 
+/// Copy file to new position, will overwrite file in copy_position
 /// Returns true if successful, returns false if positional argument is invalid, no file could be found
 bool copy_file(FileSystem* fs, char* file_name, char* copy_position) {
 	int final_position = string_to_clamped_int(copy_position);
@@ -390,13 +604,8 @@ bool copy_file(FileSystem* fs, char* file_name, char* copy_position) {
 			return FAILURE;
 		}
 		
-		// assemble copy mark
-		print_debug("Counting duplicate files");
-		int dup_file_count = count_duplicate_files(fs, file_name);
-		print_debug("%d duplicates found.", dup_file_count);
-		int name_length = snprintf(new_file->name, sizeof(new_file->name), "%s(%d)", file_name, dup_file_count);
-		if(name_length < 0 || (size_t)name_length >= sizeof(new_file->name)) {
-			print_error("Copied file name is too long: %s", file_name);
+		// assemble copy mark; the file at final_position is overwritten, so its name doesn't count as taken
+		if(!make_unique_file_name(fs, file_name, final_position, new_file->name, sizeof(new_file->name))) {
 			free(new_file);
 			return FAILURE;
 		}
@@ -410,6 +619,12 @@ bool copy_file(FileSystem* fs, char* file_name, char* copy_position) {
 			return FAILURE;
 		}
 		new_file->size = fs->files[source_position]->size;
+		memcpy(new_file->tags, fs->files[source_position]->tags, sizeof(new_file->tags));
+		if(!copy_string(new_file->extension, sizeof(new_file->extension), fs->files[source_position]->extension)) {
+			print_error("Could not copy extension metadata for %s.", file_name);
+			free(new_file);
+			return FAILURE;
+		}
 		
 		// since I am allocating every time now, I need to free old files if they exist in the copy position
 		if(fs->occupied[final_position]) {
@@ -441,7 +656,15 @@ bool get_info_on_file(const FileSystem* fs, char* position_as_str) {
 		return FAILURE;
 	}
 
-	print_system("File name: %s\n\tSize: %d\n\tPosition: %d\n\tContents: %s", fs->files[position]->name, fs->files[position]->size, position, fs->files[position]->content);
+	File* file = fs->files[position];
+	print_system("File name: %s\n\tSize: %d\n\tPosition: %d\n\tContents: %s\n\tExtension: %s\n\tTags:",
+			file->name, file->size, position, file->content, file->extension);
+	for(int i = 0; i < MAX_TAG_COUNT; i++) {
+		if(file->tags[i][0] != '\0') {
+			printf(" %s", file->tags[i]);
+		}
+	}
+	printf("\n");
 	return SUCCESS;
 }
 
@@ -575,10 +798,10 @@ bool overwrite_file(FileSystem* fs, char* file_name, char* content) {
 
 int tests(void) {
 	FileSystem* fs = (FileSystem*)(malloc(sizeof(FileSystem)));
-	zeroed_file = (File) { .size = 0, .name = "", .content = ""};
-	for(int i = 0; i < MAX_NUM_FILES; i++) {
-		fs->occupied[i] = false; // initialize occupied to all be set to false
-		fs->files[i] = &zeroed_file; // initialize files to all be zeroed out
+	if(fs == NULL || !initialize_file_system(fs)) {
+		print_error("Failed to initialize the file system test fixture.");
+		free(fs);
+		return 1;
 	}
 	
 	int result = create_file(fs, "foo.txt", strlen("0123456789"), "0123456789");
@@ -590,6 +813,30 @@ int tests(void) {
 	result = search_file(fs, "foo.txt");
 	if(!result) {
 		print_error("Failed the search_file() test.");
+		return 1;
+	}
+
+	result = tag_file(fs, "foo.txt", "notes");
+	if(!result || strcmp(fs->files[0]->tags[0], "notes") != 0) {
+		print_error("Failed the tag_file() test.");
+		return 1;
+	}
+
+	if(find_extension_association(fs, "text") < 0 ||
+			strcmp(fs->files[0]->extension, ".txt") != 0) {
+		print_error("Failed the file extension metadata test.");
+		return 1;
+	}
+
+	result = search_file(fs, "#notes");
+	if(!result) {
+		print_error("Failed the tag search test.");
+		return 1;
+	}
+
+	result = search_file(fs, "@text");
+	if(!result) {
+		print_error("Failed the extension search test.");
 		return 1;
 	}
 
@@ -605,9 +852,56 @@ int tests(void) {
 		return 1;
 	}
 
-	result = delete_file(fs, "foo.txt", 0);
+	result = delete_file(fs, "bar.txt", 0);
 	if(!result) {
 		print_error("Failed the delete_file() test.");
+		return 1;
+	}
+
+	// duplicate names get "(n)" before the extension
+	create_file(fs, "a.txt", 1, "a");
+	create_file(fs, "b.txt", 1, "b");
+	create_file(fs, "a.txt", 1, "c");
+	result = rename_file(fs, "b.txt", "a.txt");
+	if(!result || strcmp(fs->files[0]->name, "a.txt") != 0 ||
+			strcmp(fs->files[2]->name, "a(1).txt") != 0 ||
+			strcmp(fs->files[1]->name, "a(2).txt") != 0 ||
+			strcmp(fs->files[1]->extension, ".txt") != 0) {
+		print_error("Failed the duplicate file name test.");
+		return 1;
+	}
+
+	result = rename_file(fs, "a(2).txt", "a(2).txt");
+	if(!result || strcmp(fs->files[1]->name, "a(2).txt") != 0) {
+		print_error("Failed the rename to own name test.");
+		return 1;
+	}
+
+	create_file(fs, "plain", 1, "p");
+	create_file(fs, "plain", 1, "p");
+	if(strcmp(fs->files[4]->name, "plain(1)") != 0) {
+		print_error("Failed the duplicate name without extension test.");
+		return 1;
+	}
+
+	result = copy_file(fs, "a.txt", "5");
+	if(!result || strcmp(fs->files[5]->name, "a(3).txt") != 0) {
+		print_error("Failed the copy duplicate name test.");
+		return 1;
+	}
+
+	if(!delete_file(fs, "a(1).txt", 2) || !delete_file(fs, "a.txt", 0) || delete_file(fs, "a", 1)) {
+		print_error("Failed the delete duplicate file test.");
+		return 1;
+	}
+
+	char long_name[MAX_FILE_NAME_SIZE];
+	memset(long_name, 'x', sizeof(long_name) - 1);
+	long_name[sizeof(long_name) - 1] = '\0';
+	long_name[sizeof(long_name) - 5] = '.'; // 255 chars ending in ".xxx"
+	if(!create_file(fs, long_name, 1, "l") || create_file(fs, long_name, 1, "l") ||
+			rename_file(fs, "plain", long_name)) {
+		print_error("Failed the duplicate name length limit test.");
 		return 1;
 	}
 
@@ -667,8 +961,14 @@ int parse_command(char* line) {
 		parser_error = "File does not exist";
 		return RESULT_ERROR;
 	} else if(streql(command, "search") && arg_1) {
-		bool result = search_file(global_file_system, arg_1); /// search <file>
+		bool result = search_file(global_file_system, arg_1); /// search <file>, search #tag, or search @extension
 		check_result(result, "Failed to find file.")
+	} else if(streql(command, "tag") && arg_1 && arg_2) {
+		bool result = tag_file(global_file_system, arg_1, arg_2); /// tag <file> <tag>
+		check_result(result, "Failed to tag file.")
+	} else if(streql(command, "associate") && arg_1 && arg_2) {
+		bool result = associate_file_extension(global_file_system, arg_1, arg_2); /// associate <extension> <extension name>
+		check_result(result, "Failed to associate file extension.")
 	} else if(streql(command, "rename") && arg_1 && arg_2) {
 		bool result = rename_file(global_file_system, arg_1, arg_2); /// rename <file> <new name>
 		check_result(result, "Failed to rename file.")
@@ -711,7 +1011,11 @@ int parse_command(char* line) {
 		print_system("cls/clear - clear the terminal.");
 		print_system("create <name> <content> - create a file called <name> containing <content>.");
 		print_system("delete <file> - delete <file>.");
-		print_system("search <file> - search for <file>, prints out some information about <file> if it exists.");
+		print_system("search <file> - search by file name.");
+		print_system("search #<tag> - search for all files with the given tag.");
+		print_system("search @<extension> - search for all files with the given extension name or suffix.");
+		print_system("tag <file> <tag> - add a tag to a file (maximum 5 tags per file).");
+		print_system("associate <extension> <extension name> - associate a suffix (for example md) with a searchable name (for example markdown).");
 		print_system("info <position> - prints out some information about the file (if any) at <position>.");
 		print_system("rename <file> <new name> - rename <file> to <new name>.");
 		print_system("list - list the status of the file system, will print a table of all the positions in the filesystem and the name of the file occupying them (if any).");
@@ -733,13 +1037,6 @@ int parse_command(char* line) {
 	return RESULT_ERROR;
 }
 
-#define INIT_FS(FS) FS = (FileSystem*)(malloc(sizeof(FileSystem))); \
-	zeroed_file = (File) { .size = 0, .name = "", .content = "" }; \
-	for(int i = 0; i < MAX_NUM_FILES; i++) { \
-		FS->occupied[i] = false; \
-		FS->files[i] = &zeroed_file; \
-	} \
-
 int main(int argc, char* argv[]) {
 
 // stole this off the interwebs for getting Unicode support so I could do box drawing
@@ -754,18 +1051,25 @@ int main(int argc, char* argv[]) {
 #endif
 	
 	for(int i = 1; i < argc; i++) { // iterate over args
-		if(streql(argv[1], "-d")) {
+		if(streql(argv[i], "-d")) {
 			is_debug = true;
 		}
 
-		if(streql(argv[1], "-t")){
+		if(streql(argv[i], "-t")){
 			do_tests = true;
 		}
 	}
 	
-	if(do_tests) { tests(); }
+	if(do_tests && tests() != 0) {
+		return EXIT_FAILURE;
+	}
 
-	INIT_FS(global_file_system)
+	global_file_system = (FileSystem*)malloc(sizeof(FileSystem));
+	if(global_file_system == NULL || !initialize_file_system(global_file_system)) {
+		free(global_file_system);
+		print_error("Could not initialize the file system.");
+		return EXIT_FAILURE;
+	}
 
 	// begin shell
 	bool quit = false;
