@@ -14,6 +14,11 @@
 #define MAX_NUM_FILES 10
 #define MAX_FILE_NAME_SIZE 256
 #define MAX_FILE_SIZE 256
+#define MAX_TAG_COUNT 5
+#define MAX_TAG_NAME_LENGTH 256
+#define MAX_FILE_EXTENSION_LENGTH 256
+#define MAX_EXTENSION_ALIAS_LENGTH 5
+#define MAX_DEFINED_FILE_ASSOCIATIONS 5
 #define MAX_COMMAND_LENGTH 20
 
 #define SUCCESS true
@@ -57,21 +62,30 @@ void print_error(char* message, ...) {
 
 }
 
-struct File {
+typedef struct {
 	char name[MAX_FILE_NAME_SIZE]; // Max size is 256 bytes
 	size_t size; // Size of file in bytes
+	char tags[MAX_TAG_COUNT][MAX_TAG_NAME_LENGTH]; // file tags
+	char extension[MAX_FILE_EXTENSION_LENGTH]; // file extension (NOT THE ALIAS)
 	char content[MAX_FILE_SIZE]; // Max size is 256 bytes
-};
+} File;
+
+// A file type and its alias
+typedef struct {
+	char alias[MAX_EXTENSION_ALIAS_LENGTH];
+	char extension[MAX_FILE_EXTENSION_LENGTH];
+} FileAssociation;
 
 /// files is the array containing the actual files.
 /// occupied is for creating new files.
-struct FileSystem { 
-	struct File* files[MAX_NUM_FILES];
+typedef struct { 
+	File* files[MAX_NUM_FILES];
 	bool occupied[MAX_NUM_FILES]; 
-};
+	FileAssociation file_extensions[MAX_DEFINED_FILE_ASSOCIATIONS];
+} FileSystem;
 
 /// Returns the next open position in the given FileSystem, if none are open, returns -1
-int get_next_position(const struct FileSystem* fs) {
+int get_next_position(const FileSystem* fs) {
 	for(int i = 0; i < MAX_NUM_FILES; i++) {
 		if(!fs->occupied[i]) { return i; }
 	}
@@ -79,7 +93,7 @@ int get_next_position(const struct FileSystem* fs) {
 }
 
 /// Returns the total number of occupied spaces in the filesystem
-size_t get_total_occupied(const struct FileSystem* fs) {
+size_t get_total_occupied(const FileSystem* fs) {
 	int count = 0;
 	for(int i = 0; i < MAX_NUM_FILES; i++) {
 		if(fs->occupied[i]) count++;
@@ -88,7 +102,7 @@ size_t get_total_occupied(const struct FileSystem* fs) {
 }
 
 /// Returns the position of the file with the matching name, if no file with name exists, returns -1
-int find_file_position(const struct FileSystem* fs, char* file_name) {
+int find_file_position(const FileSystem* fs, char* file_name) {
 	int total_occupied = get_total_occupied(fs);
 	print_debug("Total occupied spaces: %d", total_occupied);
 	
@@ -136,7 +150,7 @@ int string_to_clamped_int(char* str) {
 /// Creates a file and returns a true/false based on success/failure.
 /// file_size is the size of the file in bytes.
 /// The max size of a file is 256 bytes (for simplicity)
-bool create_file(struct FileSystem* fs, char* file_name, size_t file_size, char* content) {
+bool create_file(FileSystem* fs, char* file_name, size_t file_size, char* content) {
 	print_debug("Creating File...");
 	int next_open_position = get_next_position(fs);
 
@@ -145,7 +159,7 @@ bool create_file(struct FileSystem* fs, char* file_name, size_t file_size, char*
 		return FAILURE;
 	}
 
-	struct File* f = (struct File*)(malloc(sizeof(struct File)));
+	File* f = (File*)(malloc(sizeof(File)));
 
 	strcpy_s(f->name, sizeof(f->name), file_name);
 	
@@ -168,11 +182,11 @@ bool create_file(struct FileSystem* fs, char* file_name, size_t file_size, char*
 	return SUCCESS;
 }
 
-struct File zeroed_file;
+File zeroed_file;
 
 /// Deletes the file pointed to by the given pointer.
 /// Returns false if failed and true if succeeded.
-bool delete_file(struct FileSystem* fs, char* file_name, int position) {
+bool delete_file(FileSystem* fs, char* file_name, int position) {
 	print_debug("Deleting file...");
 
 	if(position >= MAX_NUM_FILES) {
@@ -210,10 +224,10 @@ bool delete_file(struct FileSystem* fs, char* file_name, int position) {
 /// Searches for a file in the filesystem by name
 /// Prints out the information of the file.
 /// Returns true if successful, returns false if no file could be found
-bool search_file(const struct FileSystem* fs, char* file_name) {
+bool search_file(const FileSystem* fs, char* file_name) {
 	int position = find_file_position(fs, file_name);
 	if(position >= 0 && fs->occupied[position]) {
-		struct File* f = fs->files[position];
+		File* f = fs->files[position];
 		print_system("Found file: %s\n\tSize: %llu\n\tPosition: %llu", f->name, strlen(f->content), position);
 		return SUCCESS;
 	}
@@ -222,7 +236,7 @@ bool search_file(const struct FileSystem* fs, char* file_name) {
 
 /// Renames the given file to the new name
 /// Returns true if successful, returns false if no file could be found
-bool rename_file(struct FileSystem* fs, char* file_name, char* new_name) {
+bool rename_file(FileSystem* fs, char* file_name, char* new_name) {
 	int position = find_file_position(fs, file_name);
 	print_debug("Position: %d", position);
 
@@ -239,7 +253,7 @@ bool rename_file(struct FileSystem* fs, char* file_name, char* new_name) {
 
 /// Moves the given file to the given position
 /// Returns true if successful, returns false if no file could be found, or the positional argument is invalid 
-bool move_file(struct FileSystem* fs, char* file_name, char* new_position) {
+bool move_file(FileSystem* fs, char* file_name, char* new_position) {
 	int final_position = string_to_clamped_int(new_position);
 	int current_position = find_file_position(fs, file_name);
 	
@@ -249,7 +263,7 @@ bool move_file(struct FileSystem* fs, char* file_name, char* new_position) {
 	}
 
 	if(current_position >= 0 && fs->occupied[current_position]) { // file exists
-		struct File* file = fs->files[current_position]; // save pointer temporarily
+		File* file = fs->files[current_position]; // save pointer temporarily
 		
 		// move pointer
 		fs->files[final_position] = file;
@@ -276,7 +290,7 @@ bool starts_with(const char* str, const char* prefix) {
 	return strncmp(str, prefix, prefix_len) == 0;
 }
 
-int count_duplicate_files(const struct FileSystem* fs, char* file_name) {
+int count_duplicate_files(const FileSystem* fs, char* file_name) {
 	int count = 0;
 	for(int i = 0; i < MAX_NUM_FILES; i++) {
 		print_debug("count_duplicate_files.count = %d", count);
@@ -291,7 +305,7 @@ int count_duplicate_files(const struct FileSystem* fs, char* file_name) {
 
 /// Copy file to new position, will overwrite file in copy_position 
 /// Returns true if successful, returns false if positional argument is invalid, no file could be found
-bool copy_file(struct FileSystem* fs, char* file_name, char* copy_position) {
+bool copy_file(FileSystem* fs, char* file_name, char* copy_position) {
 	int final_position = string_to_clamped_int(copy_position);
 	int source_position = find_file_position(fs, file_name);
 
@@ -303,7 +317,7 @@ bool copy_file(struct FileSystem* fs, char* file_name, char* copy_position) {
 
 	if(source_position >= 0 && fs->occupied[source_position]) {
 		// Allocate memory for the new file at destination
-		struct File* new_file = (struct File*)(malloc(sizeof(struct File)));
+		File* new_file = (File*)(malloc(sizeof(File)));
 		
 		print_debug("Copying name over...");
 		strcpy_s(new_file->name, sizeof(new_file->name), file_name);
@@ -350,7 +364,7 @@ bool copy_file(struct FileSystem* fs, char* file_name, char* copy_position) {
 
 /// Prints out information on a file at a given position
 /// Returns true if successful, returns false if positional argument is invalid
-bool get_info_on_file(const struct FileSystem* fs, char* position_as_str) {
+bool get_info_on_file(const FileSystem* fs, char* position_as_str) {
 	int position = string_to_clamped_int(position_as_str);
 	
 	if(position < 0) {
@@ -362,7 +376,7 @@ bool get_info_on_file(const struct FileSystem* fs, char* position_as_str) {
 	return SUCCESS;
 }
 
-bool list_files(const struct FileSystem* fs) {
+bool list_files(const FileSystem* fs) {
 	printf("Position │ File Name\n");
 	printf("─────────┼──────────\n");
 	for(int i = 0; i < MAX_NUM_FILES; i++) {
@@ -375,7 +389,7 @@ bool list_files(const struct FileSystem* fs) {
 	return SUCCESS;
 }
 
-bool echo_file(const struct FileSystem* fs, char* file_name) {
+bool echo_file(const FileSystem* fs, char* file_name) {
 	int current_position = find_file_position(fs, file_name);
 
 	if(current_position < 0 ) {
@@ -393,7 +407,7 @@ bool echo_file(const struct FileSystem* fs, char* file_name) {
 	return FAILURE;
 }
 
-bool append_to_file(struct FileSystem* fs, char* file_name, char* content) {
+bool append_to_file(FileSystem* fs, char* file_name, char* content) {
 	int current_position = find_file_position(fs, file_name);
 
 	if(current_position < 0 ) {
@@ -424,7 +438,7 @@ bool append_to_file(struct FileSystem* fs, char* file_name, char* content) {
 	return FAILURE;
 }
 
-bool prepend_to_file(struct FileSystem* fs, char* file_name, char* prefix) {
+bool prepend_to_file(FileSystem* fs, char* file_name, char* prefix) {
 	int current_position = find_file_position(fs, file_name);
 
 	if(current_position < 0 ) {
@@ -462,7 +476,7 @@ bool prepend_to_file(struct FileSystem* fs, char* file_name, char* prefix) {
 	return FAILURE;
 }
 
-bool overwrite_file(struct FileSystem* fs, char* file_name, char* content) {
+bool overwrite_file(FileSystem* fs, char* file_name, char* content) {
 	int current_position = find_file_position(fs, file_name);
 
 	if(current_position < 0 ) {
@@ -487,8 +501,8 @@ bool overwrite_file(struct FileSystem* fs, char* file_name, char* content) {
 }
 
 int tests() {
-	struct FileSystem* fs = (struct FileSystem*)(malloc(sizeof(struct FileSystem)));
-	zeroed_file = (struct File) { .size = 0, .name = "", .content = ""};
+	FileSystem* fs = (FileSystem*)(malloc(sizeof(FileSystem)));
+	zeroed_file = (File) { .size = 0, .name = "", .content = ""};
 	for(int i = 0; i < MAX_NUM_FILES; i++) {
 		fs->occupied[i] = false; // initialize occupied to all be set to false
 		fs->files[i] = &zeroed_file; // initialize files to all be zeroed out
@@ -530,7 +544,7 @@ int tests() {
 }
 
 
-struct FileSystem* global_file_system;
+FileSystem* global_file_system;
 
 #define check_result(r, ERR_MSG) if(r) { return RESULT_SUCCESS; }\
 	else { \
@@ -645,8 +659,8 @@ int parse_command(char* line) {
 	return RESULT_ERROR;
 }
 
-#define INIT_FS(FS) FS = (struct FileSystem*)(malloc(sizeof(struct FileSystem))); \
-	zeroed_file = (struct File) { .size = 0, .name = "", .content = "" }; \
+#define INIT_FS(FS) FS = (FileSystem*)(malloc(sizeof(FileSystem))); \
+	zeroed_file = (File) { .size = 0, .name = "", .content = "" }; \
 	for(int i = 0; i < MAX_NUM_FILES; i++) { \
 		FS->occupied[i] = false; \
 		FS->files[i] = &zeroed_file; \
