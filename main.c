@@ -24,6 +24,57 @@
 #define SUCCESS true
 #define FAILURE false
 
+bool copy_string(char* destination, size_t destination_size, const char* source) {
+	if(destination == NULL || source == NULL || destination_size == 0) {
+		return FAILURE;
+	}
+
+	size_t source_length = strlen(source);
+	if(source_length >= destination_size) {
+		return FAILURE;
+	}
+
+	memcpy(destination, source, source_length + 1);
+	return SUCCESS;
+}
+
+bool append_string(char* destination, size_t destination_size, const char* source) {
+	if(destination == NULL || source == NULL || destination_size == 0) {
+		return FAILURE;
+	}
+
+	size_t destination_length = strlen(destination);
+	size_t source_length = strlen(source);
+	if(destination_length >= destination_size || source_length >= destination_size - destination_length) {
+		return FAILURE;
+	}
+
+	memcpy(destination + destination_length, source, source_length + 1);
+	return SUCCESS;
+}
+
+char* next_token(char** cursor, const char* delimiters) {
+	if(cursor == NULL || *cursor == NULL || delimiters == NULL) {
+		return NULL;
+	}
+
+	char* token_start = *cursor + strspn(*cursor, delimiters);
+	if(*token_start == '\0') {
+		*cursor = token_start;
+		return NULL;
+	}
+
+	char* token_end = token_start + strcspn(token_start, delimiters);
+	if(*token_end != '\0') {
+		*token_end = '\0';
+		*cursor = token_end + 1;
+	} else {
+		*cursor = token_end;
+	}
+
+	return token_start;
+}
+
 // check if strings are equal
 bool streql(char* str_1, char* str_2) {
 	return strncmp(str_1, str_2, strlen(str_2)) == 0;
@@ -161,17 +212,31 @@ bool create_file(FileSystem* fs, char* file_name, size_t file_size, char* conten
 
 	File* f = (File*)(malloc(sizeof(File)));
 
-	strcpy_s(f->name, sizeof(f->name), file_name);
+	if(f == NULL) {
+		print_error("Could not allocate memory for %s.", file_name);
+		return FAILURE;
+	}
+
+	if(!copy_string(f->name, sizeof(f->name), file_name)) {
+		print_error("File name is too long: %s", file_name);
+		free(f);
+		return FAILURE;
+	}
 	
 	if(file_size <= MAX_FILE_SIZE) {
 		f->size = file_size;
 	} else {
 		print_error("%s size is greater than max file size of 256 bytes. Truncating file...\n\tFile size: %llu", file_name, file_size);
+		free(f);
 		return FAILURE;
 	}
 
 	print_debug("Copying contents over...");
-	strcpy_s(f->content, sizeof(f->content), content);
+	if(!copy_string(f->content, sizeof(f->content), content)) {
+		print_error("Contents for %s exceed the file size limit.", file_name);
+		free(f);
+		return FAILURE;
+	}
 	
 	print_debug("File Contents: %s, Given Contents: %s", f->content, content);
 
@@ -242,8 +307,10 @@ bool rename_file(FileSystem* fs, char* file_name, char* new_name) {
 
 	if(position >= 0 && fs->occupied[position]) {
 		print_debug("Attempting to rename %s to %s.", file_name, new_name);
-		strcpy_s(fs->files[position]->name, sizeof(fs->files[position]->name), new_name);
-		strcpy_s(fs->files[position]->name, sizeof(fs->files[position]->name), new_name);
+		if(!copy_string(fs->files[position]->name, sizeof(fs->files[position]->name), new_name)) {
+			print_error("New file name is too long: %s", new_name);
+			return FAILURE;
+		}
 		print_system("Successfully renamed %s to %s.", file_name, new_name);
 		return SUCCESS;
 	}
@@ -318,28 +385,30 @@ bool copy_file(FileSystem* fs, char* file_name, char* copy_position) {
 	if(source_position >= 0 && fs->occupied[source_position]) {
 		// Allocate memory for the new file at destination
 		File* new_file = (File*)(malloc(sizeof(File)));
+		if(new_file == NULL) {
+			print_error("Could not allocate memory to copy %s.", file_name);
+			return FAILURE;
+		}
 		
-		print_debug("Copying name over...");
-		strcpy_s(new_file->name, sizeof(new_file->name), file_name);
-
 		// assemble copy mark
 		print_debug("Counting duplicate files");
 		int dup_file_count = count_duplicate_files(fs, file_name);
 		print_debug("%d duplicates found.", dup_file_count);
-		char copy_mark_str[256] = "(";
-		char count_as_str[256];
-		snprintf(count_as_str, sizeof(count_as_str), "%d", dup_file_count);
-		strcat_s(copy_mark_str, sizeof(copy_mark_str), count_as_str);
-		strcat_s(copy_mark_str, sizeof(copy_mark_str), ")");
-		print_debug("Copy mark: '%s'", copy_mark_str);
-
-		// add on copy mark
-		strcat_s(new_file->name, sizeof(new_file->name), copy_mark_str);
+		int name_length = snprintf(new_file->name, sizeof(new_file->name), "%s(%d)", file_name, dup_file_count);
+		if(name_length < 0 || (size_t)name_length >= sizeof(new_file->name)) {
+			print_error("Copied file name is too long: %s", file_name);
+			free(new_file);
+			return FAILURE;
+		}
 		print_debug("Final new name: %s", new_file->name);
 
 		// assemble copy of given file
 		print_debug("Attempting to copy %s to %d", file_name, final_position);
-		strcpy_s(new_file->content, sizeof(new_file->content), fs->files[source_position]->content);
+		if(!copy_string(new_file->content, sizeof(new_file->content), fs->files[source_position]->content)) {
+			print_error("Contents of %s exceed the file size limit.", file_name);
+			free(new_file);
+			return FAILURE;
+		}
 		new_file->size = fs->files[source_position]->size;
 		
 		// since I am allocating every time now, I need to free old files if they exist in the copy position
@@ -421,8 +490,8 @@ bool append_to_file(FileSystem* fs, char* file_name, char* content) {
 	}
 
 	if(fs->occupied[current_position]) {
-		if(fs->files[current_position]->size + sizeof(content) < MAX_FILE_SIZE) {
-			strncat_s(fs->files[current_position]->content, sizeof(fs->files[current_position]->content), content, MAX_FILE_SIZE);
+		if(append_string(fs->files[current_position]->content, sizeof(fs->files[current_position]->content), content)) {
+			fs->files[current_position]->size = strlen(fs->files[current_position]->content);
 			print_system("Appended %s to %s.", content, file_name);
 			return SUCCESS;
 		} else if(fs->files[current_position]->size >= MAX_FILE_SIZE) {
@@ -491,7 +560,11 @@ bool overwrite_file(FileSystem* fs, char* file_name, char* content) {
 
 	if(fs->occupied[current_position]) {
 		memset(fs->files[current_position]->content, 0, sizeof(fs->files[current_position]->content));
-		strcpy_s(fs->files[current_position]->content, sizeof(fs->files[current_position]->content), content);
+		if(!copy_string(fs->files[current_position]->content, sizeof(fs->files[current_position]->content), content)) {
+			print_error("Contents for %s exceed the file size limit.", file_name);
+			return FAILURE;
+		}
+		fs->files[current_position]->size = strlen(content);
 		print_system("Overwrote %s with %s.", file_name, content);
 		return SUCCESS;
 	}
@@ -500,7 +573,7 @@ bool overwrite_file(FileSystem* fs, char* file_name, char* content) {
 	return FAILURE;
 }
 
-int tests() {
+int tests(void) {
 	FileSystem* fs = (FileSystem*)(malloc(sizeof(FileSystem)));
 	zeroed_file = (File) { .size = 0, .name = "", .content = ""};
 	for(int i = 0; i < MAX_NUM_FILES; i++) {
@@ -565,20 +638,21 @@ int parse_command(char* line) {
 	char* command;
 	char* arg_1; // not used in exit
 	char* arg_2; // only use in move, copy, rename, and File I/O
-	char* _newline; // this is completely unused
+	char* cursor = line;
 
-	command = strtok_s(line, " ", &arg_1);
-	arg_1 = strtok_s(arg_1, " ", &arg_2);
-	arg_2 = strtok_s(arg_2, "\n", &_newline);
+	command = next_token(&cursor, " \n");
+	arg_1 = next_token(&cursor, " \n");
+	arg_2 = next_token(&cursor, "\n");
 
-	if(arg_2 == NULL) {
-		print_debug("Command did not contain a second argument.");
-		arg_1 = strtok_s(arg_1, "\n", &_newline);
-	}
+	print_debug("Command: %s\n\tFirst Argument: %s\n\tSecond Argument: %s",
+			command != NULL ? command : "(none)",
+			arg_1 != NULL ? arg_1 : "(none)",
+			arg_2 != NULL ? arg_2 : "(none)");
 
-	print_debug("Command: %s\n\tFirst Argument: %s\n\tSecond Argument: %s", command, arg_1, arg_2);
-
-	if(streql(command, "exit")) {
+	if(command == NULL) {
+		parser_error = "No command entered.";
+		return RESULT_ERROR;
+	} else if(streql(command, "exit")) {
 		print_debug("Exiting shell..."); /// exit
 		return RESULT_EXIT;
 	} else if(streql(command, "create") && arg_1 && arg_2) {
@@ -692,10 +766,6 @@ int main(int argc, char* argv[]) {
 	if(do_tests) { tests(); }
 
 	INIT_FS(global_file_system)
-	
-	// TODO:
-	// File I/O
-	//   - prepend, overwrite
 
 	// begin shell
 	bool quit = false;
