@@ -3,8 +3,8 @@
 Full stop, this is just practice, this is not meant to have any kind of real world use, just a fun little toy I made in ~3 days.
 
 ## Compile From Source
-I legit just used `clang main.c -Wall -g -o filesystem.exe` to compile this. So if you have clang installed, just run this.\
-I don't know how I would compile this using `gcc`, but it is a single file, I am sure you can figure it out.\
+I legit just used `clang main.c editor.c -Wall -g -o filesystem.exe` to compile this. If you have clang installed, just run this.\
+If you have gcc, use `gcc main.c editor.c -Wall -g -o filesystem.exe`.\
 The `-g` is just so that I get the `compile_commands.json` file for lsp support, ngl I don't even need it anymore, I just do it out of habit now.
 
 ## Startup Arguments
@@ -13,6 +13,13 @@ The `-g` is just so that I get the `compile_commands.json` file for lsp support,
 
 ## CLI Arguments
 If you want to know about all the available commands, just run the `help` command. It tells you. :P
+
+## Built-in Text Editor
+The `edit <file>` command opens a file in the built-in text editor.
+Arrow keys to move the cursor.\
+`<C+s>` to save, and `<ESC>` to discard unsaved changes.\
+`<C+a>` to select everything, `<C+c>` copies the selection, `<C+x>` cuts it, and `<C+v>` pastes the editor's copied text.\
+Typing, backspace, or delete replaces the selection.
 
 ## Concept
 Okay, so every file has a max size of 256 bytes, every file name also has a max size of 256 bytes.\

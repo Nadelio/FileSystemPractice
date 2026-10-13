@@ -1,7 +1,7 @@
 # TODO
-- simple text editor
-  - accessed via the `edit <file>` command
-  - paste (`<C+v>`), copy (`<C+v>`), and cut (`<C+x>`) shortcuts
-  - arrow key navigation
-  - `<ESC>` key for exiting editor
-  - `<C+s>` for saving file changes
+- [x] simple text editor
+  - [x] accessed via the `edit <file>` command
+  - [x] paste (`<C+v>`), copy (`<C+c>`), and cut (`<C+x>`) shortcuts
+  - [x] arrow key navigation
+  - [x] `<ESC>` key for exiting editor
+  - [x] `<C+s>` for saving file changes

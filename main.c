@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdarg.h>
 #include <string.h>
+#include "editor.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -699,6 +700,28 @@ bool echo_file(const FileSystem* fs, char* file_name) {
 	return FAILURE;
 }
 
+bool edit_file(FileSystem* fs, char* file_name) {
+	int position = find_file_position(fs, file_name);
+	if(position < 0 || !fs->occupied[position]) {
+		print_error("File %s does not exist.", file_name);
+		return FAILURE;
+	}
+
+	int result = edit_text(fs->files[position]->content, sizeof(fs->files[position]->content));
+	if(result < 0) {
+		print_error("Could not edit %s.", file_name);
+		return FAILURE;
+	}
+	if(result == 0) {
+		print_system("Changes to %s were discarded.", file_name);
+		return SUCCESS;
+	}
+
+	fs->files[position]->size = strlen(fs->files[position]->content);
+	print_system("Saved changes to %s.", file_name);
+	return SUCCESS;
+}
+
 bool append_to_file(FileSystem* fs, char* file_name, char* content) {
 	int current_position = find_file_position(fs, file_name);
 
@@ -987,6 +1010,9 @@ int parse_command(char* line) {
 	} else if(streql(command, "echo") && arg_1) {
 		bool result = echo_file(global_file_system, arg_1);
 		check_result(result, "Failed to echo file.")
+	} else if(streql(command, "edit") && arg_1) {
+		bool result = edit_file(global_file_system, arg_1);
+		check_result(result, "Failed to edit file.")
 	} else if(streql(command, "append") && arg_1 && arg_2) {
 		bool result = append_to_file(global_file_system, arg_1, arg_2);
 		check_result(result, "Failed to append to file.")
@@ -1022,6 +1048,7 @@ int parse_command(char* line) {
 		print_system("move <file> <new position> - moves <file> to <new position>, will overwrite the file at the new position.");
 		print_system("copy <file> <destination> - copies <file> to <destination>, will overwrite the file at <destination>.");
 		print_system("echo <file> - prints out the contents of <file>.");
+		print_system("edit <file> - open <file> in the text editor (<C+s> saves, <ESC> discards unsaved changes).");
 		print_system("append <file> <content> - adds <content> to the end of <file>, will fail if <file>'s size + <content>'s size is greater than 256 bytes or if <file>'s size is already 256 bytes.");
 		print_system("prepend <file> <content> - adds <content> to the beginning of <file>, will fail if <file>'s size + <content>'s size is greater than 256 bytes or if <file>'s size is already 256 bytes.");
 		print_system("overwrite <file> <content> - overwrites <file> with <content>, will fail if <content>'s size is greater than 256 bytes.");
